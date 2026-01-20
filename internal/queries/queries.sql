@@ -473,7 +473,43 @@ SELECT
             AND d.refclassid = 'pg_class'::REGCLASS
             AND a.attrelid = table_c.oid
             AND NOT a.attisdropped
-    )::TEXT [] AS column_names
+    )::TEXT [] AS column_names,
+    -- Cross-table dependencies: tables referenced in USING/CHECK expressions
+    -- other than the owning table. This is needed for correct statement ordering
+    -- when a policy references columns from other tables via subqueries.
+    -- Note: We don't filter on refobjsubid because column-level dependencies
+    -- (refobjsubid > 0) also need to establish a table dependency.
+    (SELECT
+        ARRAY_AGG(DISTINCT JSONB_BUILD_OBJECT(
+            'schema', dep_ns.nspname,
+            'name', dep_c.relname,
+            'columns', (
+                SELECT ARRAY_AGG(a.attname::TEXT)
+                FROM pg_catalog.pg_attribute AS a
+                INNER JOIN pg_catalog.pg_depend AS d2
+                    ON a.attrelid = d2.refobjid
+                    AND a.attnum = d2.refobjsubid
+                WHERE
+                    d2.objid = pol.oid
+                    AND d2.classid = 'pg_policy'::REGCLASS
+                    AND d2.refobjid = dep_c.oid
+                    AND d2.refobjsubid > 0
+                    AND NOT a.attisdropped
+            )
+        ))
+    FROM pg_catalog.pg_depend AS d
+    INNER JOIN pg_catalog.pg_class AS dep_c
+        ON d.refobjid = dep_c.oid
+        AND dep_c.relkind IN ('r', 'p')
+    INNER JOIN pg_catalog.pg_namespace AS dep_ns
+        ON dep_c.relnamespace = dep_ns.oid
+    WHERE
+        d.objid = pol.oid
+        AND d.classid = 'pg_policy'::REGCLASS
+        AND d.refclassid = 'pg_class'::REGCLASS
+        AND dep_c.oid != table_c.oid
+        AND dep_ns.nspname NOT IN ('pg_catalog', 'information_schema')
+    )::TEXT[] AS table_dependencies
 FROM pg_catalog.pg_policy AS pol
 INNER JOIN pg_catalog.pg_class AS table_c ON pol.polrelid = table_c.oid
 INNER JOIN

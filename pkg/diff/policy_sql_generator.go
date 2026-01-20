@@ -240,6 +240,9 @@ func (psg *policySQLVertexGenerator) Alter(diff policyDiff) ([]Statement, error)
 		oldCopy.CheckExpression = diff.new.CheckExpression
 	}
 	oldCopy.Columns = diff.new.Columns
+	// TableDependencies is a derived field based on the USING/CHECK expressions, so when
+	// expressions change the dependencies naturally update. No special handling needed.
+	oldCopy.TableDependencies = diff.new.TableDependencies
 
 	if diff := cmp.Diff(oldCopy, diff.new); diff != "" {
 		return nil, fmt.Errorf("unsupported diff %s: %w", diff, ErrNotImplemented)
@@ -285,6 +288,13 @@ func (psg *policySQLVertexGenerator) GetAddAlterDependencies(newPolicy, oldPolic
 		deps = append(deps, mustRun(psg.GetSQLVertexId(newPolicy, diffTypeAddAlter)).after(buildColumnVertexId(tc.Name, diffTypeAddAlter)))
 	}
 
+	// Run after any dependent tables (other than the owning table) are added/altered.
+	// This handles cross-table policy dependencies where the policy's USING/CHECK
+	// expression references other tables.
+	for _, t := range newPolicy.TableDependencies {
+		deps = append(deps, mustRun(psg.GetSQLVertexId(newPolicy, diffTypeAddAlter)).after(buildTableVertexId(t.SchemaQualifiedName, diffTypeAddAlter)))
+	}
+
 	if !cmp.Equal(oldPolicy, schema.Policy{}) {
 		// Run before the old columns are deleted (if they are deleted)
 		oldTargetColumns, err := getTargetColumns(oldPolicy.Columns, psg.oldSchemaColumnsByName)
@@ -313,6 +323,13 @@ func (psg *policySQLVertexGenerator) GetDeleteDependencies(pol schema.Policy) ([
 	for _, c := range columns {
 		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildColumnVertexId(c.Name, diffTypeDelete)))
 		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildColumnVertexId(c.Name, diffTypeAddAlter)))
+	}
+
+	// The policy needs to be deleted before any dependent tables (other than the owning table)
+	// are deleted or add/altered. This handles cross-table policy dependencies.
+	for _, t := range pol.TableDependencies {
+		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildTableVertexId(t.SchemaQualifiedName, diffTypeDelete)))
+		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildTableVertexId(t.SchemaQualifiedName, diffTypeAddAlter)))
 	}
 
 	return deps, nil
