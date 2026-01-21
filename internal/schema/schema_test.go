@@ -1273,6 +1273,117 @@ var (
 			},
 			expectedErrContains: "are both included and excluded",
 		},
+		{
+			name: "Cross-table policy",
+			ddl: []string{`
+			CREATE TABLE users (
+				id INT PRIMARY KEY,
+				name TEXT NOT NULL,
+				department TEXT NOT NULL
+			);
+
+			CREATE TABLE documents (
+				id INT PRIMARY KEY,
+				author_id INT NOT NULL,
+				content TEXT NOT NULL,
+				department TEXT NOT NULL
+			);
+			ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+			CREATE POLICY documents_author_policy ON documents
+				AS PERMISSIVE
+				FOR SELECT
+				TO PUBLIC
+				USING (author_id IN (SELECT id FROM users WHERE name = current_user));
+
+			CREATE POLICY documents_department_policy ON documents
+				AS RESTRICTIVE
+				FOR ALL
+				TO PUBLIC
+				USING (department IN (SELECT department FROM users WHERE name = current_user))
+				WITH CHECK (department IN (SELECT department FROM users WHERE name = current_user));
+		`},
+			expectedSchema: Schema{
+				NamedSchemas: []NamedSchema{
+					{Name: "public"},
+				},
+				Tables: []Table{
+					{
+						SchemaQualifiedName: SchemaQualifiedName{SchemaName: "public", EscapedName: "\"users\""},
+						Columns: []Column{
+							{Name: "id", Type: "integer", Size: 4},
+							{Name: "name", Type: "text", Size: -1, Collation: defaultCollation},
+							{Name: "department", Type: "text", Size: -1, Collation: defaultCollation},
+						},
+						CheckConstraints: nil,
+						ReplicaIdentity:  ReplicaIdentityDefault,
+					},
+					{
+						SchemaQualifiedName: SchemaQualifiedName{SchemaName: "public", EscapedName: "\"documents\""},
+						Columns: []Column{
+							{Name: "id", Type: "integer", Size: 4},
+							{Name: "author_id", Type: "integer", Size: 4},
+							{Name: "content", Type: "text", Size: -1, Collation: defaultCollation},
+							{Name: "department", Type: "text", Size: -1, Collation: defaultCollation},
+						},
+						CheckConstraints: nil,
+						Policies: []Policy{
+							{
+								EscapedName:     "\"documents_author_policy\"",
+								IsPermissive:    true,
+								AppliesTo:       []string{"PUBLIC"},
+								Cmd:             SelectPolicyCmd,
+								UsingExpression: "(author_id IN ( SELECT users.id\n   FROM users\n  WHERE (users.name = CURRENT_USER)))",
+								Columns:         []string{"author_id"},
+								TableDependencies: []TableDependency{
+									{
+										SchemaQualifiedName: SchemaQualifiedName{SchemaName: "public", EscapedName: "\"users\""},
+										Columns:             []string{"id", "name"},
+									},
+								},
+							},
+							{
+								EscapedName:     "\"documents_department_policy\"",
+								IsPermissive:    false,
+								AppliesTo:       []string{"PUBLIC"},
+								Cmd:             AllPolicyCmd,
+								UsingExpression: "(department IN ( SELECT users.department\n   FROM users\n  WHERE (users.name = CURRENT_USER)))",
+								CheckExpression: "(department IN ( SELECT users.department\n   FROM users\n  WHERE (users.name = CURRENT_USER)))",
+								Columns:         []string{"department", "department"},
+								TableDependencies: []TableDependency{
+									{
+										SchemaQualifiedName: SchemaQualifiedName{SchemaName: "public", EscapedName: "\"users\""},
+										Columns:             []string{"name", "department", "name", "department"},
+									},
+								},
+							},
+						},
+						ReplicaIdentity: ReplicaIdentityDefault,
+						RLSEnabled:      true,
+					},
+				},
+				Indexes: []Index{
+					{
+						OwningRelName:   SchemaQualifiedName{SchemaName: "public", EscapedName: "\"users\""},
+						OwningRelKind:   RelKindOrdinaryTable,
+						Name:            "users_pkey",
+						Columns:         []string{"id"},
+						IsUnique:        true,
+						Constraint:      &IndexConstraint{Type: PkIndexConstraintType, EscapedConstraintName: "\"users_pkey\"", ConstraintDef: "PRIMARY KEY (id)", IsLocal: true},
+						GetIndexDefStmt: "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)",
+					},
+					{
+						OwningRelName:   SchemaQualifiedName{SchemaName: "public", EscapedName: "\"documents\""},
+						OwningRelKind:   RelKindOrdinaryTable,
+						Name:            "documents_pkey",
+						Columns:         []string{"id"},
+						IsUnique:        true,
+						Constraint:      &IndexConstraint{Type: PkIndexConstraintType, EscapedConstraintName: "\"documents_pkey\"", ConstraintDef: "PRIMARY KEY (id)", IsLocal: true},
+						GetIndexDefStmt: "CREATE UNIQUE INDEX documents_pkey ON public.documents USING btree (id)",
+					},
+				},
+			},
+		},
 	}
 )
 
