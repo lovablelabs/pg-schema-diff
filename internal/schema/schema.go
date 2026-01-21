@@ -496,6 +496,10 @@ type Policy struct {
 	UsingExpression string
 	// Columns are the columns that the policy applies to.
 	Columns []string
+	// TableDependencies are tables (other than the owning table) that the policy
+	// references in its USING/CHECK expressions. This is used for correct
+	// statement ordering when a policy references columns from other tables.
+	TableDependencies []TableDependency
 }
 
 func (p Policy) GetName() string {
@@ -1389,15 +1393,20 @@ func (s *schemaFetcher) fetchPolicies(ctx context.Context) ([]policyAndTable, er
 
 	var policies []policyAndTable
 	for _, rp := range rawPolicies {
+		tableDependencies, err := parseJSONTableDependencies(rp.TableDependencies)
+		if err != nil {
+			return nil, fmt.Errorf("parsing table dependencies for policy %s: %w", rp.PolicyName, err)
+		}
 		policies = append(policies, policyAndTable{
 			policy: Policy{
-				EscapedName:     EscapeIdentifier(rp.PolicyName),
-				IsPermissive:    rp.IsPermissive,
-				AppliesTo:       rp.AppliesTo,
-				Cmd:             PolicyCmd(rp.Cmd),
-				CheckExpression: rp.CheckExpression,
-				UsingExpression: rp.UsingExpression,
-				Columns:         rp.ColumnNames,
+				EscapedName:       EscapeIdentifier(rp.PolicyName),
+				IsPermissive:      rp.IsPermissive,
+				AppliesTo:         rp.AppliesTo,
+				Cmd:               PolicyCmd(rp.Cmd),
+				CheckExpression:   rp.CheckExpression,
+				UsingExpression:   rp.UsingExpression,
+				Columns:           rp.ColumnNames,
+				TableDependencies: tableDependencies,
 			},
 			table: buildNameFromUnescaped(rp.OwningTableName, rp.OwningTableSchemaName),
 		})

@@ -1175,6 +1175,18 @@ func (t *tableSQLVertexGenerator) GetAddAlterDependencies(table, _ schema.Table)
 			mustRun(t.GetSQLVertexId(table, diffTypeAddAlter)).after(buildTableVertexId(*table.ParentTable, diffTypeAddAlter)),
 		)
 	}
+
+	// Add cross-table dependencies from policies. If a policy's USING/CHECK expression
+	// references another table, the table containing the policy must be processed after
+	// that referenced table exists.
+	for _, policy := range table.Policies {
+		for _, depTable := range policy.TableDependencies {
+			deps = append(deps,
+				mustRun(t.GetSQLVertexId(table, diffTypeAddAlter)).after(buildTableVertexId(depTable.SchemaQualifiedName, diffTypeAddAlter)),
+			)
+		}
+	}
+
 	return deps, nil
 }
 
@@ -1243,6 +1255,21 @@ func (t *tableSQLVertexGenerator) GetDeleteDependencies(table schema.Table) ([]d
 			mustRun(t.GetSQLVertexId(table, diffTypeDelete)).after(buildTableVertexId(*table.ParentTable, diffTypeDelete)),
 		)
 	}
+
+	// Add cross-table dependencies from policies. If a policy references another table,
+	// the table containing the policy must be deleted BEFORE the referenced table is deleted
+	// or altered (since the policy's expression would become invalid).
+	for _, policy := range table.Policies {
+		for _, depTable := range policy.TableDependencies {
+			deps = append(deps,
+				mustRun(t.GetSQLVertexId(table, diffTypeDelete)).before(buildTableVertexId(depTable.SchemaQualifiedName, diffTypeDelete)),
+			)
+			deps = append(deps,
+				mustRun(t.GetSQLVertexId(table, diffTypeDelete)).before(buildTableVertexId(depTable.SchemaQualifiedName, diffTypeAddAlter)),
+			)
+		}
+	}
+
 	return deps, nil
 }
 

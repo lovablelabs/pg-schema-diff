@@ -658,6 +658,118 @@ var policyAcceptanceTestCases = []acceptanceTestCase{
 
 		expectedPlanErrorIs: diff.ErrNotImplemented,
 	},
+	{
+		name: "Add policy referencing new column on different table (cross-table dependency)",
+		oldSchemaDDL: []string{
+			`
+				CREATE TABLE organizations (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+				);
+				CREATE TABLE members (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					org_id UUID REFERENCES organizations(id)
+				);
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+				CREATE TABLE organizations (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					owner_id UUID
+				);
+				CREATE TABLE members (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					org_id UUID REFERENCES organizations(id)
+				);
+				ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY "org_owners_manage_members" ON members
+					FOR ALL
+					USING (
+						EXISTS (
+							SELECT 1 FROM organizations o
+							WHERE o.id = members.org_id
+							AND o.owner_id IS NOT NULL
+						)
+					);
+			`,
+		},
+		expectedHazardTypes: []diff.MigrationHazardType{
+			diff.MigrationHazardTypeAuthzUpdate,
+		},
+	},
+	{
+		name: "Add policy referencing new table (cross-table dependency)",
+		oldSchemaDDL: []string{
+			`
+				CREATE TABLE members (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					org_id UUID
+				);
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+				CREATE TABLE organizations (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					owner_id UUID
+				);
+				CREATE TABLE members (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					org_id UUID REFERENCES organizations(id)
+				);
+				ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY "org_owners_manage_members" ON members
+					FOR ALL
+					USING (
+						EXISTS (
+							SELECT 1 FROM organizations o
+							WHERE o.id = members.org_id
+							AND o.owner_id IS NOT NULL
+						)
+					);
+			`,
+		},
+		expectedHazardTypes: []diff.MigrationHazardType{
+			diff.MigrationHazardTypeAuthzUpdate,
+		},
+	},
+	{
+		// Test case from GitHub issue #266: policy referencing another table in non-public schema
+		// https://github.com/stripe/pg-schema-diff/issues/266
+		// Note: No hazards expected because both tables are brand new (hazards are stripped for new tables)
+		name: "Add policy referencing another table in non-public schema (issue #266)",
+		roles: []string{
+			"api_role",
+		},
+		oldSchemaDDL: []string{
+			`
+				CREATE SCHEMA tenant;
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+				CREATE SCHEMA tenant;
+				CREATE TABLE tenant.projects (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					organization_id UUID
+				);
+				CREATE TABLE tenant.project_members (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					project_id UUID REFERENCES tenant.projects(id)
+				);
+				CREATE POLICY project_members_org_policy ON tenant.project_members
+					AS PERMISSIVE
+					FOR ALL
+					TO api_role
+					USING (EXISTS (
+						SELECT 1 FROM tenant.projects
+						WHERE tenant.projects.id = project_members.project_id
+						AND tenant.projects.organization_id IS NOT NULL
+					));
+			`,
+		},
+		expectedHazardTypes: nil,
+	},
 }
 
 func TestPolicyCases(t *testing.T) {
