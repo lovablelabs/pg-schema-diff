@@ -16,6 +16,9 @@ type sqlVertexId interface {
 type sqlPriority int
 
 const (
+	// Indicates a statement should run before other "sooner" statements. Used for functions which must be
+	// created before policies that reference them.
+	sqlPrioritySoonest sqlPriority = 2
 	// Indicates a statement should run as soon as possible. Usually, most adds will have this priority.
 	sqlPrioritySooner sqlPriority = 1
 	// sqlPriorityUnset is the default priority for a statement
@@ -61,8 +64,11 @@ func (s sqlVertex) GetId() string {
 }
 
 func (s sqlVertex) GetPriority() int {
-	// Weight the priority (which is just a "direction") by the number of statements
-	return len(s.statements) * int(s.priority)
+	// Use the base priority directly. Previously this was multiplied by statement count,
+	// but that caused objects with many statements (like tables with GRANTs) to have
+	// higher priority than objects with few statements (like functions), regardless of
+	// the base priority level.
+	return int(s.priority)
 }
 
 // dependency indicates an edge between the SQL to resolve a diff for a source schema object and the SQL to resolve

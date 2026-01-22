@@ -153,12 +153,21 @@ type legacySqlVertexGenerator[S schema.Object, Diff diff[S]] interface {
 }
 
 type wrappedLegacySqlVertexGenerator[S schema.Object, Diff diff[S]] struct {
-	generator legacySqlVertexGenerator[S, Diff]
+	generator   legacySqlVertexGenerator[S, Diff]
+	addPriority sqlPriority
 }
 
 func legacyToNewSqlVertexGenerator[S schema.Object, Diff diff[S]](generator legacySqlVertexGenerator[S, Diff]) sqlVertexGenerator[S, Diff] {
 	return &wrappedLegacySqlVertexGenerator[S, Diff]{
-		generator: generator,
+		generator:   generator,
+		addPriority: sqlPrioritySooner,
+	}
+}
+
+func legacyToNewSqlVertexGeneratorWithPriority[S schema.Object, Diff diff[S]](generator legacySqlVertexGenerator[S, Diff], addPriority sqlPriority) sqlVertexGenerator[S, Diff] {
+	return &wrappedLegacySqlVertexGenerator[S, Diff]{
+		generator:   generator,
+		addPriority: addPriority,
 	}
 }
 
@@ -177,7 +186,7 @@ func (s *wrappedLegacySqlVertexGenerator[S, Diff]) Add(o S) (partialSQLGraph, er
 	return partialSQLGraph{
 		vertices: []sqlVertex{{
 			id:         s.generator.GetSQLVertexId(o, diffTypeAddAlter),
-			priority:   sqlPrioritySooner,
+			priority:   s.addPriority,
 			statements: statements,
 		}},
 		dependencies: deps,
@@ -217,7 +226,7 @@ func (s *wrappedLegacySqlVertexGenerator[S, Diff]) Alter(d Diff) (partialSQLGrap
 	return partialSQLGraph{
 		vertices: []sqlVertex{{
 			id:         s.generator.GetSQLVertexId(d.GetNew(), diffTypeAddAlter),
-			priority:   sqlPrioritySooner,
+			priority:   s.addPriority,
 			statements: statements,
 		}},
 		dependencies: deps,

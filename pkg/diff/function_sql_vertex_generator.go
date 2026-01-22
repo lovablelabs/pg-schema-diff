@@ -14,9 +14,12 @@ type functionSQLVertexGenerator struct {
 }
 
 func newFunctionSqlVertexGenerator(functionsInNewSchemaByName map[string]schema.Function) sqlVertexGenerator[schema.Function, functionDiff] {
-	return legacyToNewSqlVertexGenerator[schema.Function, functionDiff](&functionSQLVertexGenerator{
+	// Use sqlPrioritySoonest to ensure functions are created before other objects (like policies)
+	// that may reference them. This is necessary because policies can call user-defined functions
+	// in their USING/CHECK expressions, but this dependency is not tracked in pg_depend.
+	return legacyToNewSqlVertexGeneratorWithPriority[schema.Function, functionDiff](&functionSQLVertexGenerator{
 		functionsInNewSchemaByName: functionsInNewSchemaByName,
-	})
+	}, sqlPrioritySoonest)
 }
 
 func (f *functionSQLVertexGenerator) Add(function schema.Function) ([]Statement, error) {
