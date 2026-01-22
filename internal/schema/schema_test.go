@@ -239,7 +239,7 @@ var (
 			GRANT SELECT ON schema_2.foo TO some_role_1;
 			GRANT INSERT ON schema_2.foo TO some_role_2 WITH GRANT OPTION;
 		`},
-			expectedHash: "43388964f7bede0",
+			expectedHash: "69342de97351df15",
 			expectedSchema: Schema{
 				NamedSchemas: []NamedSchema{
 					{Name: "public"},
@@ -1380,6 +1380,64 @@ var (
 						IsUnique:        true,
 						Constraint:      &IndexConstraint{Type: PkIndexConstraintType, EscapedConstraintName: "\"documents_pkey\"", ConstraintDef: "PRIMARY KEY (id)", IsLocal: true},
 						GetIndexDefStmt: "CREATE UNIQUE INDEX documents_pkey ON public.documents USING btree (id)",
+					},
+				},
+			},
+		},
+		{
+			name: "Policy-to-function dependency",
+			ddl: []string{`
+			CREATE TABLE user_roles (
+				user_id UUID NOT NULL,
+				role TEXT NOT NULL
+			);
+
+			CREATE FUNCTION has_role(uid UUID, required_role TEXT) RETURNS BOOLEAN AS $$
+				SELECT EXISTS (
+					SELECT 1 FROM user_roles WHERE user_id = uid AND role = required_role
+				);
+			$$ LANGUAGE SQL STABLE SECURITY DEFINER;
+
+			ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+
+			CREATE POLICY admin_view_policy ON user_roles
+				FOR SELECT
+				TO PUBLIC
+				USING (has_role(user_id, 'admin'));
+		`},
+			expectedSchema: Schema{
+				NamedSchemas: []NamedSchema{
+					{Name: "public"},
+				},
+				Tables: []Table{
+					{
+						SchemaQualifiedName: SchemaQualifiedName{SchemaName: "public", EscapedName: "\"user_roles\""},
+						Columns: []Column{
+							{Name: "user_id", Type: "uuid", Size: 16},
+							{Name: "role", Type: "text", Size: -1, Collation: defaultCollation},
+						},
+						Policies: []Policy{
+							{
+								EscapedName:     "\"admin_view_policy\"",
+								IsPermissive:    true,
+								AppliesTo:       []string{"PUBLIC"},
+								Cmd:             SelectPolicyCmd,
+								UsingExpression: "has_role(user_id, 'admin'::text)",
+								Columns:         []string{"user_id"},
+								FunctionDependencies: []SchemaQualifiedName{
+									{SchemaName: "public", EscapedName: "\"has_role\"(uid uuid, required_role text)"},
+								},
+							},
+						},
+						ReplicaIdentity: ReplicaIdentityDefault,
+						RLSEnabled:      true,
+					},
+				},
+				Functions: []Function{
+					{
+						SchemaQualifiedName: SchemaQualifiedName{SchemaName: "public", EscapedName: "\"has_role\"(uid uuid, required_role text)"},
+						FunctionDef:         "CREATE OR REPLACE FUNCTION public.has_role(uid uuid, required_role text)\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\nAS $function$\n\t\t\t\tSELECT EXISTS (\n\t\t\t\t\tSELECT 1 FROM user_roles WHERE user_id = uid AND role = required_role\n\t\t\t\t);\n\t\t\t$function$\n",
+						Language:            "sql",
 					},
 				},
 			},

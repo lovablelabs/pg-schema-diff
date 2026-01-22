@@ -240,9 +240,11 @@ func (psg *policySQLVertexGenerator) Alter(diff policyDiff) ([]Statement, error)
 		oldCopy.CheckExpression = diff.new.CheckExpression
 	}
 	oldCopy.Columns = diff.new.Columns
-	// TableDependencies is a derived field based on the USING/CHECK expressions, so when
-	// expressions change the dependencies naturally update. No special handling needed.
+	// TableDependencies and FunctionDependencies are derived fields based on the
+	// USING/CHECK expressions, so when expressions change the dependencies naturally
+	// update. No special handling needed.
 	oldCopy.TableDependencies = diff.new.TableDependencies
+	oldCopy.FunctionDependencies = diff.new.FunctionDependencies
 
 	if diff := cmp.Diff(oldCopy, diff.new); diff != "" {
 		return nil, fmt.Errorf("unsupported diff %s: %w", diff, ErrNotImplemented)
@@ -295,6 +297,13 @@ func (psg *policySQLVertexGenerator) GetAddAlterDependencies(newPolicy, oldPolic
 		deps = append(deps, mustRun(psg.GetSQLVertexId(newPolicy, diffTypeAddAlter)).after(buildTableVertexId(t.SchemaQualifiedName, diffTypeAddAlter)))
 	}
 
+	// Run after any dependent functions are added/altered.
+	// This handles policy-to-function dependencies where the policy's USING/CHECK
+	// expression calls user-defined functions.
+	for _, f := range newPolicy.FunctionDependencies {
+		deps = append(deps, mustRun(psg.GetSQLVertexId(newPolicy, diffTypeAddAlter)).after(buildFunctionVertexId(f, diffTypeAddAlter)))
+	}
+
 	if !cmp.Equal(oldPolicy, schema.Policy{}) {
 		// Run before the old columns are deleted (if they are deleted)
 		oldTargetColumns, err := getTargetColumns(oldPolicy.Columns, psg.oldSchemaColumnsByName)
@@ -330,6 +339,12 @@ func (psg *policySQLVertexGenerator) GetDeleteDependencies(pol schema.Policy) ([
 	for _, t := range pol.TableDependencies {
 		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildTableVertexId(t.SchemaQualifiedName, diffTypeDelete)))
 		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildTableVertexId(t.SchemaQualifiedName, diffTypeAddAlter)))
+	}
+
+	// The policy needs to be deleted before any dependent functions are deleted.
+	// This handles policy-to-function dependencies.
+	for _, f := range pol.FunctionDependencies {
+		deps = append(deps, mustRun(psg.GetSQLVertexId(pol, diffTypeDelete)).before(buildFunctionVertexId(f, diffTypeDelete)))
 	}
 
 	return deps, nil

@@ -509,7 +509,28 @@ SELECT
         AND d.refclassid = 'pg_class'::REGCLASS
         AND dep_c.oid != table_c.oid
         AND dep_ns.nspname NOT IN ('pg_catalog', 'information_schema')
-    )::TEXT[] AS table_dependencies
+    )::TEXT[] AS table_dependencies,
+    -- Function dependencies: functions referenced in USING/CHECK expressions.
+    -- This is needed for correct statement ordering when a policy calls
+    -- user-defined functions in its expressions.
+    (SELECT
+        ARRAY_AGG(DISTINCT JSONB_BUILD_OBJECT(
+            'schema', proc_ns.nspname,
+            'name', proc.proname,
+            'identity_arguments', pg_catalog.pg_get_function_identity_arguments(proc.oid)
+        ))
+    FROM pg_catalog.pg_depend AS d
+    INNER JOIN pg_catalog.pg_proc AS proc
+        ON d.refobjid = proc.oid
+    INNER JOIN pg_catalog.pg_namespace AS proc_ns
+        ON proc.pronamespace = proc_ns.oid
+    WHERE
+        d.objid = pol.oid
+        AND d.classid = 'pg_policy'::REGCLASS
+        AND d.refclassid = 'pg_proc'::REGCLASS
+        AND d.deptype = 'n'
+        AND proc_ns.nspname NOT IN ('pg_catalog', 'information_schema')
+    )::TEXT[] AS function_dependencies
 FROM pg_catalog.pg_policy AS pol
 INNER JOIN pg_catalog.pg_class AS table_c ON pol.polrelid = table_c.oid
 INNER JOIN
