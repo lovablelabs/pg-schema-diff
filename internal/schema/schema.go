@@ -1284,7 +1284,7 @@ func (s *schemaFetcher) fetchSequences(ctx context.Context) ([]Sequence, error) 
 }
 
 func (s *schemaFetcher) fetchFunctions(ctx context.Context) ([]Function, error) {
-	rawFunctions, err := s.q.GetProcs(ctx, 'f')
+	rawFunctions, err := s.q.GetProcs(ctx, "f")
 	if err != nil {
 		return nil, fmt.Errorf("GetProcs: %w", err)
 	}
@@ -1350,7 +1350,7 @@ func (s *schemaFetcher) fetchDependsOnFunctions(ctx context.Context, systemCatal
 }
 
 func (s *schemaFetcher) fetchProcedures(ctx context.Context) ([]Procedure, error) {
-	rawProcedures, err := s.q.GetProcs(ctx, 'p')
+	rawProcedures, err := s.q.GetProcs(ctx, "p")
 	if err != nil {
 		return nil, fmt.Errorf("GetProcs: %w", err)
 	}
