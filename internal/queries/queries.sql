@@ -266,7 +266,8 @@ SELECT
     pg_catalog.pg_get_function_identity_arguments(
         pg_proc.oid
     ) AS func_identity_arguments,
-    pg_catalog.pg_get_functiondef(pg_proc.oid) AS func_def
+    pg_catalog.pg_get_functiondef(pg_proc.oid) AS func_def,
+    pg_catalog.pg_get_function_result(pg_proc.oid) AS func_result
 FROM pg_catalog.pg_proc
 INNER JOIN
     pg_catalog.pg_namespace AS proc_namespace

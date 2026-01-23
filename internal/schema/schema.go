@@ -447,8 +447,23 @@ type Function struct {
 	FunctionDef string
 	// Language is the language of the function. This is relevant in determining if we
 	// can track the dependencies of the function (or not)
-	Language           string
+	Language string
+	// ReturnType is the canonical return type signature as returned by `pg_get_function_result`.
+	// This includes RETURNS TABLE(...) columns, OUT parameters, and simple return types.
+	// Used to detect return type changes during schema diff.
+	ReturnType         string
 	DependsOnFunctions []SchemaQualifiedName
+}
+
+// GetBaseFunctionIdentifier returns a unique identifier for the function based on schema and base name only,
+// ignoring parameters. This is used for matching functions during diff to detect signature changes.
+// For example, "func_name"(arg1 int, arg2 text) returns "schema_name.func_name"
+func (f Function) GetBaseFunctionIdentifier() string {
+	baseName := f.EscapedName
+	if idx := strings.Index(f.EscapedName, "("); idx > 0 {
+		baseName = f.EscapedName[:idx]
+	}
+	return fmt.Sprintf("%s.%s", EscapeIdentifier(f.SchemaName), baseName)
 }
 
 type Procedure struct {
@@ -1328,6 +1343,7 @@ func (s *schemaFetcher) buildFunction(ctx context.Context, rawFunction queries.G
 		SchemaQualifiedName: buildProcName(rawFunction.FuncName, rawFunction.FuncIdentityArguments, rawFunction.FuncSchemaName),
 		FunctionDef:         rawFunction.FuncDef,
 		Language:            rawFunction.FuncLang,
+		ReturnType:          rawFunction.FuncResult,
 		DependsOnFunctions:  dependsOnFunctions,
 	}, nil
 }
