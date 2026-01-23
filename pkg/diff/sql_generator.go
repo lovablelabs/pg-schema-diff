@@ -157,6 +157,102 @@ type schemaDiff struct {
 	materializedViewDiffs     listDiff[schema.MaterializedView, materializedViewDiff]
 }
 
+// diffFunctions diffs two lists of functions with special handling for function overloading.
+// Unlike other schema objects, functions can have the same base name but different signatures.
+// We match functions by their base name (schema + function name without parameters) to detect
+// signature changes, which require DROP + CREATE instead of CREATE OR REPLACE.
+func diffFunctions(oldFunctions, newFunctions []schema.Function) (listDiff[schema.Function, functionDiff], error) {
+	// Build maps by base function identifier (schema.function_name without parameters)
+	oldByBaseName := make(map[string][]schema.Function)
+	newByBaseName := make(map[string][]schema.Function)
+
+	for _, f := range oldFunctions {
+		baseName := f.GetBaseFunctionIdentifier()
+		oldByBaseName[baseName] = append(oldByBaseName[baseName], f)
+	}
+
+	for _, f := range newFunctions {
+		baseName := f.GetBaseFunctionIdentifier()
+		newByBaseName[baseName] = append(newByBaseName[baseName], f)
+	}
+
+	var adds []schema.Function
+	var deletes []schema.Function
+	var alters []functionDiff
+
+	// Process all base function names
+	allBaseNames := make(map[string]bool)
+	for baseName := range oldByBaseName {
+		allBaseNames[baseName] = true
+	}
+	for baseName := range newByBaseName {
+		allBaseNames[baseName] = true
+	}
+
+	for baseName := range allBaseNames {
+		oldFuncs := oldByBaseName[baseName]
+		newFuncs := newByBaseName[baseName]
+
+		if len(oldFuncs) == 0 {
+			// All new functions with this base name are adds
+			adds = append(adds, newFuncs...)
+		} else if len(newFuncs) == 0 {
+			// All old functions with this base name are deletes
+			deletes = append(deletes, oldFuncs...)
+		} else if len(oldFuncs) == 1 && len(newFuncs) == 1 {
+			// Single old and new function with same base name - treat as ALTER
+			alters = append(alters, functionDiff{
+				oldAndNew[schema.Function]{
+					old: oldFuncs[0],
+					new: newFuncs[0],
+				},
+			})
+		} else {
+			// Multiple overloaded functions with same base name - match by full signature
+			// This handles the case where there are multiple overloads and some are added/deleted
+			matchedNew := make(map[int]bool)
+			for _, oldFunc := range oldFuncs {
+				matched := false
+				for j, newFunc := range newFuncs {
+					if !matchedNew[j] && oldFunc.GetName() == newFunc.GetName() {
+						// Same signature - ALTER
+						alters = append(alters, functionDiff{
+							oldAndNew[schema.Function]{
+								old: oldFunc,
+								new: newFunc,
+							},
+						})
+						matchedNew[j] = true
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					deletes = append(deletes, oldFunc)
+				}
+			}
+
+			// Any unmatched new functions are adds
+			for j, newFunc := range newFuncs {
+				if !matchedNew[j] {
+					adds = append(adds, newFunc)
+				}
+			}
+		}
+	}
+
+	// Sort deletes for deterministic output
+	sort.Slice(deletes, func(i, j int) bool {
+		return deletes[i].GetName() < deletes[j].GetName()
+	})
+
+	return listDiff[schema.Function, functionDiff]{
+		adds:    adds,
+		deletes: deletes,
+		alters:  alters,
+	}, nil
+}
+
 // The procedure for DIFFING schemas and GENERATING/RESOLVING the SQL required to migrate the old schema to the new schema is
 // described below:
 //
@@ -284,14 +380,10 @@ func buildSchemaDiff(old, new schema.Schema) (schemaDiff, bool, error) {
 		return schemaDiff{}, false, fmt.Errorf("diffing sequences: %w", err)
 	}
 
-	functionDiffs, err := diffLists(old.Functions, new.Functions, func(old, new schema.Function, _, _ int) (functionDiff, bool, error) {
-		return functionDiff{
-			oldAndNew[schema.Function]{
-				old: old,
-				new: new,
-			},
-		}, false, nil
-	})
+	// Functions require special diffing logic because PostgreSQL allows function overloading.
+	// When a function's signature changes (e.g., different parameters), it should be treated as
+	// an ALTER that requires DROP + CREATE, not as separate DELETE and ADD operations.
+	functionDiffs, err := diffFunctions(old.Functions, new.Functions)
 	if err != nil {
 		return schemaDiff{}, false, fmt.Errorf("diffing functions: %w", err)
 	}

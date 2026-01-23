@@ -573,6 +573,88 @@ var functionAcceptanceTestCases = []acceptanceTestCase{
 		},
 		expectedHazardTypes: []diff.MigrationHazardType{diff.MigrationHazardTypeHasUntrackableDependencies},
 	},
+	{
+		name: "Alter function with changed return type (OUT parameters)",
+		oldSchemaDDL: []string{
+			`
+			CREATE FUNCTION get_reading_stats(
+				user_id uuid,
+				start_date date,
+				end_date date,
+				OUT total_pages integer,
+				OUT total_books integer
+			) AS $$
+			BEGIN
+				total_pages := 100;
+				total_books := 5;
+			END;
+			$$ LANGUAGE plpgsql;
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+			CREATE FUNCTION get_reading_stats(
+				user_id uuid,
+				start_date date,
+				end_date date,
+				OUT total_pages integer,
+				OUT total_books integer,
+				OUT avg_pages_per_book numeric
+			) AS $$
+			BEGIN
+				total_pages := 100;
+				total_books := 5;
+				avg_pages_per_book := 20.0;
+			END;
+			$$ LANGUAGE plpgsql;
+			`,
+		},
+		expectedHazardTypes: []diff.MigrationHazardType{diff.MigrationHazardTypeHasUntrackableDependencies},
+		// Explicitly specify the expected plan DDL to ensure DROP comes before CREATE
+		expectedPlanDDL: []string{
+			`DROP FUNCTION "public"."get_reading_stats"(user_id uuid, start_date date, end_date date, OUT total_pages integer, OUT total_books integer)`,
+			`CREATE OR REPLACE FUNCTION public.get_reading_stats(user_id uuid, start_date date, end_date date, OUT total_pages integer, OUT total_books integer, OUT avg_pages_per_book numeric)
+ RETURNS record
+ LANGUAGE plpgsql
+AS $function$
+			BEGIN
+				total_pages := 100;
+				total_books := 5;
+				avg_pages_per_book := 20.0;
+			END;
+			$function$
+`,
+		},
+	},
+	{
+		name: "Alter function with changed return type (simple RETURNS clause)",
+		oldSchemaDDL: []string{
+			`
+			CREATE FUNCTION get_value() RETURNS integer
+				LANGUAGE SQL
+				IMMUTABLE
+				RETURN 42;
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+			CREATE FUNCTION get_value() RETURNS text
+				LANGUAGE SQL
+				IMMUTABLE
+				RETURN '42';
+			`,
+		},
+		// Explicitly specify the expected plan DDL to ensure DROP comes before CREATE
+		expectedPlanDDL: []string{
+			`DROP FUNCTION "public"."get_value"()`,
+			`CREATE OR REPLACE FUNCTION public.get_value()
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+RETURN '42'::text
+`,
+		},
+	},
 }
 
 func TestFunctionTestCases(t *testing.T) {
