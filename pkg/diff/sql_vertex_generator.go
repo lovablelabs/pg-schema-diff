@@ -209,6 +209,14 @@ func (s *wrappedLegacySqlVertexGenerator[S, Diff]) Alter(d Diff) (partialSQLGrap
 	if err != nil {
 		return partialSQLGraph{}, fmt.Errorf("generating sql: %w", err)
 	}
+
+	// If there are no statements, don't create a vertex or add dependencies.
+	// This prevents dummy vertices from being added to the graph, which can cause
+	// circular dependency issues when objects reference each other but aren't actually changing.
+	if len(statements) == 0 {
+		return partialSQLGraph{}, nil
+	}
+
 	deps, err := s.generator.GetAddAlterDependencies(d.GetNew(), d.GetOld())
 	if err != nil {
 		return partialSQLGraph{}, fmt.Errorf("getting dependencies: %w", err)
