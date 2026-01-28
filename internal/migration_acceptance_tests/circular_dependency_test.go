@@ -102,8 +102,8 @@ var circularDependencyTestCases = []acceptanceTestCase{
 					USING (EXISTS (SELECT 1 FROM table_a WHERE id = table_b.a_id));
 			`,
 		},
-		// This should fail with a cycle detection error
-		// Until the bug is fixed, mark as expected error
+		// This test case demonstrates a scenario with a real circular dependency where both tables are modified.
+		// It is expected to fail with a "cycle detected" error, ensuring the fix for no-op changes doesn't break legitimate cycle detection.
 		expectedPlanErrorContains: "cycle detected",
 	},
 	{
