@@ -129,6 +129,7 @@ func normalizeTable(t Table) Table {
 		p.Columns = sortByKey(p.Columns, func(s string) string {
 			return s
 		})
+		p.FunctionDependencies = sortSchemaObjectsByName(p.FunctionDependencies)
 		normPolicies = append(normPolicies, p)
 	}
 	t.Policies = normPolicies
@@ -515,6 +516,10 @@ type Policy struct {
 	// references in its USING/CHECK expressions. This is used for correct
 	// statement ordering when a policy references columns from other tables.
 	TableDependencies []TableDependency
+	// FunctionDependencies are functions that the policy references in its
+	// USING/CHECK expressions. This is used for correct statement ordering
+	// when a policy calls user-defined functions in its expressions.
+	FunctionDependencies []SchemaQualifiedName
 }
 
 func (p Policy) GetName() string {
@@ -1413,16 +1418,21 @@ func (s *schemaFetcher) fetchPolicies(ctx context.Context) ([]policyAndTable, er
 		if err != nil {
 			return nil, fmt.Errorf("parsing table dependencies for policy %s: %w", rp.PolicyName, err)
 		}
+		functionDependencies, err := parseJSONFunctionDependencies(rp.FunctionDependencies)
+		if err != nil {
+			return nil, fmt.Errorf("parsing function dependencies for policy %s: %w", rp.PolicyName, err)
+		}
 		policies = append(policies, policyAndTable{
 			policy: Policy{
-				EscapedName:       EscapeIdentifier(rp.PolicyName),
-				IsPermissive:      rp.IsPermissive,
-				AppliesTo:         rp.AppliesTo,
-				Cmd:               PolicyCmd(rp.Cmd),
-				CheckExpression:   rp.CheckExpression,
-				UsingExpression:   rp.UsingExpression,
-				Columns:           rp.ColumnNames,
-				TableDependencies: tableDependencies,
+				EscapedName:          EscapeIdentifier(rp.PolicyName),
+				IsPermissive:         rp.IsPermissive,
+				AppliesTo:            rp.AppliesTo,
+				Cmd:                  PolicyCmd(rp.Cmd),
+				CheckExpression:      rp.CheckExpression,
+				UsingExpression:      rp.UsingExpression,
+				Columns:              rp.ColumnNames,
+				TableDependencies:    tableDependencies,
+				FunctionDependencies: functionDependencies,
 			},
 			table: buildNameFromUnescaped(rp.OwningTableName, rp.OwningTableSchemaName),
 		})
@@ -1604,6 +1614,24 @@ func parseJSONTableDependencies(vals []string) ([]TableDependency, error) {
 			SchemaQualifiedName: buildNameFromUnescaped(s.Name, s.Schema),
 			Columns:             s.Columns,
 		})
+	}
+	return out, nil
+}
+
+// parseJSONFunctionDependencies takes a slice of JSON values with schema,
+// `schema: string; name: string; identity_arguments: string` and unmarshals them into SchemaQualifiedName.
+func parseJSONFunctionDependencies(vals []string) ([]SchemaQualifiedName, error) {
+	var out []SchemaQualifiedName
+	for _, v := range vals {
+		var s struct {
+			Schema            string `json:"schema"`
+			Name              string `json:"name"`
+			IdentityArguments string `json:"identity_arguments"`
+		}
+		if err := json.Unmarshal([]byte(v), &s); err != nil {
+			return nil, fmt.Errorf("json.Unmarshal(%q, function dependency): %w", string(v), err)
+		}
+		out = append(out, buildProcName(s.Name, s.IdentityArguments, s.Schema))
 	}
 	return out, nil
 }

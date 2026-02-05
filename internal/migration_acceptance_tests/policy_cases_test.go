@@ -770,6 +770,108 @@ var policyAcceptanceTestCases = []acceptanceTestCase{
 		},
 		expectedHazardTypes: nil,
 	},
+	{
+		// Test case for policy-to-function dependency: adding both a function and a policy
+		// that uses that function. The function must be created before the policy.
+		// NOTE: We use a simple function that doesn't reference tables to avoid
+		// function→table dependency ordering issues (which is a separate feature).
+		name: "Add policy referencing new function (policy-to-function dependency)",
+		oldSchemaDDL: []string{
+			`
+				CREATE TABLE items (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					owner_id UUID
+				);
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+				CREATE TABLE items (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					owner_id UUID
+				);
+				-- Simple function that doesn't reference any table
+				CREATE FUNCTION is_valid_owner(owner_id UUID) RETURNS BOOLEAN AS $$
+					SELECT owner_id IS NOT NULL;
+				$$ LANGUAGE SQL IMMUTABLE;
+				ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY owner_policy ON items
+					FOR ALL
+					USING (is_valid_owner(owner_id));
+			`,
+		},
+		expectedHazardTypes: []diff.MigrationHazardType{
+			diff.MigrationHazardTypeAuthzUpdate,
+		},
+	},
+	{
+		// Test case for policy-to-function dependency in non-public schema
+		name: "Add policy referencing new function in non-public schema",
+		roles: []string{
+			"authenticated",
+		},
+		oldSchemaDDL: []string{
+			`
+				CREATE SCHEMA app;
+				CREATE TABLE app.items (
+					id UUID NOT NULL,
+					priority INT NOT NULL
+				);
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+				CREATE SCHEMA app;
+				CREATE TABLE app.items (
+					id UUID NOT NULL,
+					priority INT NOT NULL
+				);
+				-- Simple function that doesn't reference any table
+				CREATE FUNCTION app.is_high_priority(p INT) RETURNS BOOLEAN AS $$
+					SELECT p > 5;
+				$$ LANGUAGE SQL IMMUTABLE;
+				ALTER TABLE app.items ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY priority_policy ON app.items
+					FOR SELECT
+					TO authenticated
+					USING (app.is_high_priority(priority));
+			`,
+		},
+		expectedHazardTypes: []diff.MigrationHazardType{
+			diff.MigrationHazardTypeAuthzUpdate,
+		},
+	},
+	{
+		// Test case for dropping both a policy and function it references.
+		// The policy must be dropped before the function.
+		name: "Drop policy and function it references",
+		oldSchemaDDL: []string{
+			`
+				CREATE TABLE items (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					owner_id UUID
+				);
+				CREATE FUNCTION is_valid_owner(owner_id UUID) RETURNS BOOLEAN AS $$
+					SELECT owner_id IS NOT NULL;
+				$$ LANGUAGE SQL IMMUTABLE;
+				ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY owner_policy ON items
+					FOR ALL
+					USING (is_valid_owner(owner_id));
+			`,
+		},
+		newSchemaDDL: []string{
+			`
+				CREATE TABLE items (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					owner_id UUID
+				);
+			`,
+		},
+		expectedHazardTypes: []diff.MigrationHazardType{
+			diff.MigrationHazardTypeAuthzUpdate,
+		},
+	},
 }
 
 func TestPolicyCases(t *testing.T) {
