@@ -670,6 +670,7 @@ func (s schemaSQLGenerator) Alter(diff schemaDiff) ([]Statement, error) {
 		deletedTablesByName:     deletedTablesByName,
 		tablesInNewSchemaByName: tablesInNewSchemaByName,
 		tableDiffsByName:        buildDiffByNameMap[schema.Table, tableDiff](diff.tableDiffs.alters),
+		planOptions:             s.planOptions,
 	}), diff.tableDiffs)
 	if err != nil {
 		return nil, fmt.Errorf("resolving table diff: %w", err)
@@ -888,6 +889,7 @@ type tableSQLVertexGenerator struct {
 	deletedTablesByName     map[string]schema.Table
 	tablesInNewSchemaByName map[string]schema.Table
 	tableDiffsByName        map[string]tableDiff
+	planOptions             *planOptions
 }
 
 func (t *tableSQLVertexGenerator) Add(table schema.Table) ([]Statement, error) {
@@ -901,7 +903,7 @@ func (t *tableSQLVertexGenerator) Add(table schema.Table) ([]Statement, error) {
 		if len(table.Policies) > 0 {
 			return nil, fmt.Errorf("policies on partitions: %w", ErrNotImplemented)
 		}
-		if len(table.Privileges) > 0 {
+		if !t.planOptions.noPrivileges && len(table.Privileges) > 0 {
 			return nil, fmt.Errorf("privileges on partitions: %w", ErrNotImplemented)
 		}
 		// We attach the partitions separately. So the partition must have all the same check constraints
@@ -977,14 +979,16 @@ func (t *tableSQLVertexGenerator) Add(table schema.Table) ([]Statement, error) {
 		stmts = append(stmts, stripMigrationHazards(forceRLSForTable(table))...)
 	}
 
-	privilegeGenerator := &privilegeSQLVertexGenerator{tableName: table.SchemaQualifiedName}
-	for _, privilege := range table.Privileges {
-		addPrivilegeStmts, err := privilegeGenerator.Add(privilege)
-		if err != nil {
-			return nil, fmt.Errorf("generating add privilege statements for privilege %s: %w", privilege.GetName(), err)
+	if !t.planOptions.noPrivileges {
+		privilegeGenerator := &privilegeSQLVertexGenerator{tableName: table.SchemaQualifiedName}
+		for _, privilege := range table.Privileges {
+			addPrivilegeStmts, err := privilegeGenerator.Add(privilege)
+			if err != nil {
+				return nil, fmt.Errorf("generating add privilege statements for privilege %s: %w", privilege.GetName(), err)
+			}
+			// Remove hazards from statements since the table is brand new
+			stmts = append(stmts, stripMigrationHazards(addPrivilegeStmts...)...)
 		}
-		// Remove hazards from statements since the table is brand new
-		stmts = append(stmts, stripMigrationHazards(addPrivilegeStmts...)...)
 	}
 
 	return stmts, nil
@@ -1127,12 +1131,14 @@ func (t *tableSQLVertexGenerator) alterBaseTable(diff tableDiff) ([]Statement, e
 	}
 	partialGraph = concatPartialGraphs(partialGraph, policiesPartialGraph)
 
-	privilegeGenerator := newPrivilegeSQLVertexGenerator(diff.new.SchemaQualifiedName)
-	privilegesPartialGraph, err := generatePartialGraph(privilegeGenerator, diff.privilegesDiff)
-	if err != nil {
-		return nil, fmt.Errorf("resolving privilege sql: %w", err)
+	if !t.planOptions.noPrivileges {
+		privilegeGenerator := newPrivilegeSQLVertexGenerator(diff.new.SchemaQualifiedName)
+		privilegesPartialGraph, err := generatePartialGraph(privilegeGenerator, diff.privilegesDiff)
+		if err != nil {
+			return nil, fmt.Errorf("resolving privilege sql: %w", err)
+		}
+		partialGraph = concatPartialGraphs(partialGraph, privilegesPartialGraph)
 	}
-	partialGraph = concatPartialGraphs(partialGraph, privilegesPartialGraph)
 
 	graph, err := graphFromPartials(partialGraph)
 	if err != nil {
@@ -1164,7 +1170,7 @@ func (t *tableSQLVertexGenerator) alterPartition(diff tableDiff) ([]Statement, e
 		// _independent_ of how it is ordered.
 		return nil, fmt.Errorf("policies on partitions: %w", ErrNotImplemented)
 	}
-	if !diff.privilegesDiff.isEmpty() {
+	if !t.planOptions.noPrivileges && !diff.privilegesDiff.isEmpty() {
 		// Privilege diffing on individual partitions cannot be supported until where a SQL statement is generated is
 		// _independent_ of how it is ordered.
 		return nil, fmt.Errorf("privileges on partitions: %w", ErrNotImplemented)

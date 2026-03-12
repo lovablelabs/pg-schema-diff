@@ -36,6 +36,7 @@ type (
 		getSchemaOpts           []schema.GetSchemaOpt
 		randReader              io.Reader
 		noConcurrentIndexOps    bool
+		noPrivileges            bool
 	}
 
 	PlanOpt func(opts *planOptions)
@@ -110,6 +111,15 @@ func WithRandReader(randReader io.Reader) PlanOpt {
 func WithNoConcurrentIndexOps() PlanOpt {
 	return func(opts *planOptions) {
 		opts.noConcurrentIndexOps = true
+	}
+}
+
+// WithNoPrivileges disables the generation of GRANT and REVOKE statements in the migration plan.
+// This is useful when privilege management is handled separately or when diffing schemas
+// owned by different roles.
+func WithNoPrivileges() PlanOpt {
+	return func(opts *planOptions) {
+		opts.noPrivileges = true
 	}
 }
 
