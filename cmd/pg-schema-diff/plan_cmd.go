@@ -117,6 +117,7 @@ type (
 		dataPackNewTables     bool
 		disablePlanValidation bool
 		noConcurrentIndexOps  bool
+		noPrivileges          bool
 
 		statementTimeoutModifiers []string
 		lockTimeoutModifiers      []string
@@ -227,6 +228,7 @@ func createPlanOptionsFlags(cmd *cobra.Command) *planOptionsFlags {
 		"database with an identical schema to the original, asserting that the generated plan actually migrates the schema to the desired target.")
 	cmd.Flags().BoolVar(&flags.noConcurrentIndexOps, "no-concurrent-index-ops", false, "If set, will disable the use of CONCURRENTLY in CREATE INDEX and DROP INDEX statements. "+
 		"This may result in longer lock times and potential downtime during migrations.")
+	cmd.Flags().BoolVar(&flags.noPrivileges, "no-privileges", false, "If set, will skip generating GRANT and REVOKE statements in the migration plan.")
 
 	timeoutModifierFlagVar(cmd, &flags.statementTimeoutModifiers, "statement", "t")
 	timeoutModifierFlagVar(cmd, &flags.lockTimeoutModifiers, "lock", "l")
@@ -328,6 +330,9 @@ func parsePlanOptions(p planOptionsFlags) (planOptions, error) {
 	}
 	if p.noConcurrentIndexOps {
 		opts = append(opts, diff.WithNoConcurrentIndexOps())
+	}
+	if p.noPrivileges {
+		opts = append(opts, diff.WithNoPrivileges())
 	}
 
 	var statementTimeoutModifiers []timeoutModifier
